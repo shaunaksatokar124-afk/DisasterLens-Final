@@ -18,6 +18,10 @@ numpy>=1.26.0
 # ─── Evaluation ───────────────────────────────────────────────────────────────
 scikit-learn>=1.4.0
 
+# ─── Model Hub ────────────────────────────────────────────────────────────────
+# Required to download best_model.pth from Hugging Face on first run
+huggingface_hub>=0.23.0
+
 # ─── Reporting ────────────────────────────────────────────────────────────────
 reportlab>=4.1.0
 

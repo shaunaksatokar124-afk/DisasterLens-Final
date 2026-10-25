@@ -31,9 +31,22 @@ def load_config() -> dict:
 
 
 def check_model_ready(config: dict) -> bool:
-    """Return True if a trained checkpoint file exists in ``checkpoint_dir``."""
+    """Return True if a trained checkpoint is available (local or HF cache).
+
+    Checks both the configured ``checkpoint_dir`` AND the default Hugging Face
+    download cache (``artifacts/checkpoints/``) so that the dashboard reflects
+    the real state after a first-run download without requiring a page reload.
+    """
     from src.inference.predictor import find_checkpoint
-    return find_checkpoint(config) is not None
+    if find_checkpoint(config) is not None:
+        return True
+    # Also check the HF download cache directly (avoids importing hf_loader
+    # when not needed, but still reflects a previously downloaded file).
+    try:
+        from src.inference.hf_loader import get_cached_path
+        return get_cached_path() is not None
+    except Exception:
+        return False
 
 
 def demo_mode_enabled(config: dict) -> bool:
@@ -219,15 +232,15 @@ def model_not_ready_banner() -> None:
             Model Checkpoint Not Loaded
         </div>
         <div style="font-size:0.87rem;color:#B0BEC5;line-height:1.65">
-            A trained model checkpoint is required for inference. To set one up:<br>
-            1. Train the model using the Colab notebook
-                (<code style="color:#00D4FF">notebooks/DisasterLens_AI_Training.ipynb</code>)<br>
-            2. Download the <code>.pth</code> checkpoint file<br>
-            3. Set <code style="color:#00D4FF">checkpoint_dir</code> in
-                <code style="color:#00D4FF">config.yaml</code><br>
-            4. Restart Streamlit<br>
-            <em>Or set <code style="color:#00D4FF">inference.demo_mode: true</code>
-            to try the app with the built-in heuristic demo predictor.</em>
+            The checkpoint will be downloaded automatically from Hugging Face
+            (<code style="color:#00D4FF">Shaunak-006/disasterlens-checkpoint</code>)
+            on first use &mdash; an internet connection is required.<br><br>
+            If the automatic download failed, you can also:<br>
+            1. Download <code style="color:#00D4FF">best_model.pth</code> manually and place it in
+               <code style="color:#00D4FF">artifacts/checkpoints/</code><br>
+            2. Or set <code style="color:#00D4FF">checkpoint_dir</code> in
+               <code style="color:#00D4FF">config.yaml</code> and restart Streamlit.<br>
+            <em>The model is experimental &mdash; always verify predictions independently.</em>
         </div>
     </div>
     """, unsafe_allow_html=True)

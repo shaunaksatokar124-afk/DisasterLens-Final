@@ -2,10 +2,25 @@
 DisasterLens AI -- Inference Predictor
 Loads a trained U-Net checkpoint and runs pixel-level damage segmentation.
 
-When no usable checkpoint exists the predictor can fall back to a
-heuristic *demo* predictor (``src/inference/demo_predictor.py``).  Demo mode is
-opt-in via ``inference.demo_mode: true`` in ``config.yaml`` so that unit tests
-and production deployments can still require a real model.
+Checkpoint loading order
+------------------------
+1. Try to find a checkpoint in the local ``checkpoint_dir`` / ``artifacts/checkpoints/``.
+2. If nothing is found locally, attempt to download ``best_model.pth`` from
+   Hugging Face (``Shaunak-006/disasterlens-checkpoint``) via
+   ``src.inference.hf_loader.download_checkpoint``.
+3. If the download fails, the predictor is marked **not ready** and a clear
+   error message is surfaced.  No silent fallback to a heuristic predictor is
+   performed unless ``inference.demo_mode: true`` is explicitly set in
+   ``config.yaml``.
+
+The model expects:
+    * Six input channels  -- 3-ch pre-disaster RGB + 3-ch post-disaster RGB
+    * Five output classes -- background + 4 damage levels (No Damage → Destroyed)
+    * Checkpoint key       -- ``model_state_dict``
+
+This module is intentionally conservative: if loading fails, ``ready`` is
+``False`` and ``predict()`` raises ``RuntimeError`` rather than returning
+silently wrong results.
 """
 
 from __future__ import annotations
@@ -33,19 +48,35 @@ _IMAGENET_STD  = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
 
 def find_checkpoint(config: dict) -> Optional[Path]:
-    """Locate a checkpoint file inside ``paths.checkpoint_dir`` (or ``None``)."""
+    """Locate a checkpoint file inside ``paths.checkpoint_dir`` (or ``None``).
+
+    Searches the configured ``checkpoint_dir``; if that is unset, also checks
+    ``artifacts/checkpoints/`` (the default HF download location).
+    """
     paths = config.get("paths", {})
+    candidates: list[Optional[Path]] = []
+
+    # 1. Explicitly configured directory
     p = resolve_path(paths.get("checkpoint_dir"))
-    if p is None and paths.get("artifacts_dir"):
-        # train.py saves here when checkpoint_dir is left unset
-        p = resolve_path(paths["artifacts_dir"]) / "checkpoints"
-    if p is None or not p.is_dir():
-        return None
-    for name in ("best_model.pth", "best.pth", "checkpoint_best.pth", "checkpoint.pth"):
-        if (p / name).exists():
-            return p / name
-    candidates = sorted(p.glob("*.pth")) + sorted(p.glob("*.pt"))
-    return candidates[0] if candidates else None
+    if p is not None:
+        candidates.append(p)
+
+    # 2. Default HF download cache (always checked as a fallback)
+    artifacts = resolve_path(paths.get("artifacts_dir") or "artifacts")
+    if artifacts:
+        candidates.append(artifacts / "checkpoints")
+
+    for p in candidates:
+        if p is None or not p.is_dir():
+            continue
+        for name in ("best_model.pth", "best.pth", "checkpoint_best.pth", "checkpoint.pth"):
+            if (p / name).exists():
+                return p / name
+        found = sorted(p.glob("*.pth")) + sorted(p.glob("*.pt"))
+        if found:
+            return found[0]
+
+    return None
 
 
 class DamagePredictor:
@@ -58,9 +89,14 @@ class DamagePredictor:
             mask = predictor.predict(post_image, pre_image)
 
     Attributes:
-        ready (bool): True when a checkpoint is loaded OR demo mode is active.
+        ready (bool): True when a real checkpoint is loaded (or demo mode is active).
         is_demo (bool): True when running in image-processing demo mode.
         status_message (str): Human-readable description of the current state.
+
+    Notes:
+        This predictor is **experimental**. The model was trained on the xBD
+        dataset and has not been validated for operational use. Always apply
+        independent human verification to all predictions.
     """
 
     NUM_CLASSES: int = 5
@@ -75,6 +111,7 @@ class DamagePredictor:
         self.checkpoint_path: Optional[Path] = None
         self._demo_predictor = None
         self._load_error: Optional[str] = None
+        self._hf_attempted: bool = False
         self._try_load_model()
 
     # ------------------------------------------------------------------
@@ -108,7 +145,7 @@ class DamagePredictor:
         if not self.ready:
             raise RuntimeError(
                 "DamagePredictor is not ready. "
-                "Configure 'checkpoint_dir' in config.yaml and restart."
+                + (self._load_error or "Configure the model and restart.")
             )
 
         orig_h, orig_w = post_image.shape[:2]
@@ -152,13 +189,13 @@ class DamagePredictor:
             )
         if self.ready:
             ckpt = self.checkpoint_path.name if self.checkpoint_path else "unknown"
-            return f"Ready  |  Checkpoint: {ckpt}  |  Device: {self.device}"
+            return (
+                f"Model Ready (experimental)  |  Checkpoint: {ckpt}  |  Device: {self.device}  |  "
+                "Predictions require human verification"
+            )
         if self._load_error:
-            return f"Not ready — checkpoint could not be loaded: {self._load_error}"
-        ckpt_dir = self.config.get("paths", {}).get("checkpoint_dir")
-        if not ckpt_dir:
-            return "Not ready — 'checkpoint_dir' is not set in config.yaml"
-        return f"Not ready — no checkpoint found in: {ckpt_dir}"
+            return f"Not Ready — {self._load_error}"
+        return "Not Ready — checkpoint could not be located or downloaded"
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -176,37 +213,88 @@ class DamagePredictor:
         return find_checkpoint(self.config)
 
     def _try_load_model(self) -> None:
-        """Try loading a real checkpoint; fall back to demo mode if allowed."""
+        """Try loading a real checkpoint.
+
+        Loading order:
+          1. Local checkpoint (``checkpoint_dir`` or ``artifacts/checkpoints/``).
+          2. Hugging Face download.
+          3. If both fail → not ready (error surfaced; demo mode only if allowed).
+        """
+        # Step 1: local search
         self.checkpoint_path = self._find_checkpoint()
 
+        # Step 2: HF download if nothing found locally
         if self.checkpoint_path is None:
-            logger.info("No checkpoint found.")
+            self.checkpoint_path = self._try_hf_download()
+
+        if self.checkpoint_path is None:
+            # No checkpoint and no successful download
+            if not self._load_error:
+                self._load_error = (
+                    "No checkpoint found locally and Hugging Face download was not attempted "
+                    "or was skipped. Set 'checkpoint_dir' in config.yaml or ensure network access."
+                )
+            logger.warning("No checkpoint available: %s", self._load_error)
             if self.allow_demo:
                 self._activate_demo_mode()
             return
 
+        # Step 3: load the checkpoint file into the model
+        self._load_from_checkpoint(self.checkpoint_path)
+
+    def _try_hf_download(self) -> Optional[Path]:
+        """Attempt to download the checkpoint from Hugging Face.
+
+        Returns the local path on success, ``None`` on failure.
+        Sets ``self._load_error`` on failure.
+        """
+        self._hf_attempted = True
+        try:
+            from src.inference.hf_loader import download_checkpoint
+            path = download_checkpoint()
+            logger.info("HF download succeeded: %s", path)
+            return path
+        except RuntimeError as exc:
+            self._load_error = str(exc)
+            logger.error("HF download failed: %s", self._load_error)
+            return None
+        except Exception as exc:
+            self._load_error = f"{type(exc).__name__}: {exc}"
+            logger.error("Unexpected error during HF download: %s", self._load_error)
+            return None
+
+    def _load_from_checkpoint(self, path: Path) -> None:
+        """Load model weights from *path*.  Sets ``self.ready`` on success."""
         try:
             if torch is None:
                 raise ImportError("PyTorch is not installed")
-            from src.models.unet_resnet import build_model
+            from src.models.unet_resnet import DisasterLensModel
 
             model_cfg = self.config.get("model", {})
-            model = build_model(
+            model = DisasterLensModel(
                 encoder_name=model_cfg.get("encoder", "resnet34"),
-                encoder_weights=None,
+                encoder_weights=None,          # weights come from the checkpoint
                 in_channels=model_cfg.get("in_channels", 6),
                 num_classes=model_cfg.get("num_classes", 5),
             )
-            ckpt = self._load_checkpoint_file(self.checkpoint_path)
-            state_dict = ckpt.get("model_state_dict", ckpt) if isinstance(ckpt, dict) else ckpt
+
+            ckpt = self._load_checkpoint_file(path)
+            if isinstance(ckpt, dict):
+                state_dict = ckpt.get("model_state_dict", ckpt)
+            else:
+                state_dict = ckpt
+
             model.load_state_dict(state_dict)
             self.model = model.to(self.device).eval()
             self.ready = True
-            logger.info("Model loaded: %s on %s", self.checkpoint_path, self.device)
+            self._load_error = None
+            logger.info("Model loaded successfully from %s on %s", path, self.device)
+
         except Exception as exc:
             self._load_error = f"{type(exc).__name__}: {exc}"
-            logger.error("Failed to load checkpoint: %s", self._load_error)
+            logger.error("Failed to load checkpoint %s: %s", path, self._load_error)
             self.model = None
+            self.ready = False
             if self.allow_demo:
                 self._activate_demo_mode()
 

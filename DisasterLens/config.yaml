@@ -17,6 +17,15 @@ paths:
   evaluation_results_file: "artifacts/evaluation_results.json"
   analysis_history_file: "artifacts/analysis_history.json"
 
+# ── Hugging Face Model Hub ────────────────────────────────────────────────────
+# Checkpoint is downloaded automatically on first run.
+# The model is EXPERIMENTAL — evaluation results in artifacts/evaluation_results.json.
+huggingface:
+  repo_id: "Shaunak-006/disasterlens-checkpoint"
+  filename: "best_model.pth"
+  repo_type: "model"
+  local_cache_dir: "artifacts/checkpoints"
+
 # ── Model Architecture ────────────────────────────────────────────────────────
 model:
   architecture: "unet"
@@ -49,10 +58,10 @@ training:
 # ── Inference Settings ────────────────────────────────────────────────────────
 inference:
   device: "auto"
-  # When no trained checkpoint is available, fall back to a heuristic
-  # image-processing predictor so the whole app stays usable. The UI clearly
-  # labels these results as DEMO output. Set to false to require a real model.
-  demo_mode: true
+  # demo_mode: when true, falls back to a heuristic image-processing predictor
+  # if the checkpoint cannot be loaded.  The UI clearly labels this as DEMO output.
+  # Set to false (default) to require the real trained model.
+  demo_mode: false
   max_upload_size_mb: 50
   max_image_size: 1024
 
