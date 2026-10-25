@@ -1,0 +1,103 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# DisasterLens AI — Central Configuration
+# Edit paths below to match your local environment.
+# ─────────────────────────────────────────────────────────────────────────────
+
+project:
+  name: "DisasterLens AI"
+  version: "1.0.0"
+  description: "AI-powered disaster damage assessment using deep learning and satellite imagery"
+
+# ── External Paths ────────────────────────────────────────────────────────────
+paths:
+  dataset_root: null
+  checkpoint_dir: null
+  artifacts_dir: "artifacts"
+  training_history_file: "artifacts/training_history.json"
+  evaluation_results_file: "artifacts/evaluation_results.json"
+  analysis_history_file: "artifacts/analysis_history.json"
+
+# ── Model Architecture ────────────────────────────────────────────────────────
+model:
+  architecture: "unet"
+  encoder: "resnet34"
+  encoder_weights: "imagenet"
+  in_channels: 6
+  num_classes: 5
+  image_size: 512
+
+# ── Training Hyperparameters ─────────────────────────────────────────────────
+training:
+  batch_size: 8
+  learning_rate: 0.0001
+  weight_decay: 0.0001
+  epochs: 50
+  seed: 42
+  train_split: 0.70
+  val_split: 0.15
+  test_split: 0.15
+  num_workers: 4
+  focal_loss_gamma: 2.0
+  loss_weights:
+    focal: 0.5
+    dice: 0.5
+  scheduler: "cosine"
+  scheduler_T_max: 50
+  save_top_k: 3
+  monitor_metric: "val_mean_iou"
+
+# ── Inference Settings ────────────────────────────────────────────────────────
+inference:
+  device: "auto"
+  # When no trained checkpoint is available, fall back to a heuristic
+  # image-processing predictor so the whole app stays usable. The UI clearly
+  # labels these results as DEMO output. Set to false to require a real model.
+  demo_mode: true
+  max_upload_size_mb: 50
+  max_image_size: 1024
+
+# ── Damage Class Definitions ──────────────────────────────────────────────────
+classes:
+  - idx: 0
+    name: "Background"
+    color: [45, 45, 45]
+    xbd_subtypes: []
+    description: "Non-building pixels"
+  - idx: 1
+    name: "No Damage"
+    color: [0, 200, 81]
+    xbd_subtypes: ["no-damage"]
+    description: "Structure intact - no visible structural damage"
+  - idx: 2
+    name: "Minor Damage"
+    color: [255, 214, 0]
+    xbd_subtypes: ["minor-damage"]
+    description: "Partial debris, roof/wall compromise"
+  - idx: 3
+    name: "Major Damage"
+    color: [255, 109, 0]
+    xbd_subtypes: ["major-damage"]
+    description: "Severe structural failure, partial collapse"
+  - idx: 4
+    name: "Destroyed"
+    color: [255, 23, 68]
+    xbd_subtypes: ["destroyed"]
+    description: "Total collapse or complete destruction"
+
+ignore_index: 255
+
+# ── Dataset Metadata ──────────────────────────────────────────────────────────
+dataset:
+  name: "xBD (xView2 Building Damage Assessment)"
+  version: "1.0"
+  source: "https://xview2.org"
+  paper: "https://arxiv.org/abs/1911.09296"
+  license: "CC BY-NC-SA 4.0"
+  num_image_pairs: 11034      # 22,068 images in total (pre + post)
+  num_building_annotations: 850736
+  num_disaster_events: 19
+  num_hazard_types: 6
+  image_resolution: "1024x1024"
+  annotation_format: "WKT Polygon (pixel coordinates)"
+  sensor: "WorldView-2/3 (DigitalGlobe)"
+  gsd_m_max: 0.8          # xBD imagery is at or finer than ~0.8 m/pixel

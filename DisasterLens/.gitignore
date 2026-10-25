@@ -1,0 +1,44 @@
+# ─── Dataset (large, externally managed) ─────────────────────────────────────
+data/
+*.hdf5
+xbd/
+xview2/
+
+# ─── Model Checkpoints ───────────────────────────────────────────────────────
+checkpoints/
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+
+# ─── Python ──────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# ─── Streamlit ────────────────────────────────────────────────────────────────
+.streamlit/secrets.toml
+
+# ─── Analysis Artifacts (user-specific, not versioned) ───────────────────────
+artifacts/*.json
+artifacts/*.png
+artifacts/*.jpg
+artifacts/*.jpeg
+artifacts/*.pdf
+!artifacts/.gitkeep
+
+# ─── Notebook Outputs ────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# ─── OS ──────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
