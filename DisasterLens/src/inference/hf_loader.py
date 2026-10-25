@@ -1,4 +1,4 @@
-```python
+
 """
 DisasterLens AI -- Hugging Face checkpoint loader
 Downloads and caches best_model.pth from Hugging Face.
@@ -75,4 +75,4 @@ def download_checkpoint(
             f"Could not download {HF_FILENAME} from {HF_REPO_ID}. "
             f"{type(exc).__name__}: {exc}"
         ) from exc
-```
+
